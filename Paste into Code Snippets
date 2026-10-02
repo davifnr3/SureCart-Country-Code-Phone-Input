@@ -1,0 +1,893 @@
+<?php
+/**
+ * SureCart - Fixed Country Code + Phone Number Mask
+ * ------------------------------------------------
+ *
+ * - Country calling code stays outside the input and cannot be removed
+ * - The "+" symbol is visual only
+ * - SureCart receives digits only
+ * - Japan example:
+ *      Display: +81 | 090-7788-7788
+ *      Stored: 819077887788
+ * - Accepts the leading zero commonly used in Japan
+ */
+
+add_action( 'wp_footer', function () {
+	?>
+<script id="sc-country-code-phone">
+(function () {
+  'use strict';
+
+  if (window.__scCountryCodeMask) return;
+  window.__scCountryCodeMask = true;
+
+  /* =========================================================
+   * CONFIGURATION
+   * ========================================================= */
+
+  var DEFAULT_COUNTRY = 'JP';
+
+  /*
+   * digits = exact number of national digits
+   *          WITHOUT country code and WITHOUT trunk prefix
+   *
+   * mask = mask used when the user does not enter a leading zero
+   * leadingZeroMask = mask used when the country accepts a leading zero
+   */
+
+  var COUNTRIES = [
+
+    {
+      cc: 'JP',
+      name: 'Japan',
+      dialCode: '81',
+      digits: 10,
+      allowLeadingZero: true,
+      mask: '##-####-####',
+      leadingZeroMask: '###-####-####',
+      example: '090-7788-7788'
+    },
+
+    {
+      cc: 'BR',
+      name: 'Brazil',
+      dialCode: '55',
+      digits: 11,
+      allowLeadingZero: false,
+      mask: '(##) #####-####',
+      example: '(31) 98888-7777'
+    },
+
+    {
+      cc: 'PT',
+      name: 'Portugal',
+      dialCode: '351',
+      digits: 9,
+      allowLeadingZero: false,
+      mask: '### ### ###',
+      example: '912 345 678'
+    },
+
+    {
+      cc: 'US',
+      name: 'United States / Canada',
+      dialCode: '1',
+      digits: 10,
+      allowLeadingZero: false,
+      mask: '(###) ###-####',
+      example: '(305) 555-1234'
+    }
+
+  ];
+
+  /* =========================================================
+   * FUNCTIONS
+   * ========================================================= */
+
+  function flagEmoji(cc) {
+    return String.fromCodePoint(
+      0x1F1A5 + cc.charCodeAt(0)
+    ) + String.fromCodePoint(
+      0x1F1A5 + cc.charCodeAt(1)
+    );
+  }
+
+
+  function digitsOnly(value) {
+    return String(value || '').replace(/\D/g, '');
+  }
+
+
+  function getCountryByCode(cc) {
+
+    for (var i = 0; i < COUNTRIES.length; i++) {
+
+      if (COUNTRIES[i].cc === cc) {
+        return COUNTRIES[i];
+      }
+
+    }
+
+    return null;
+  }
+
+
+  function detectCountryByDialCode(number) {
+
+    number = digitsOnly(number);
+
+    var bestMatch = null;
+
+    for (var i = 0; i < COUNTRIES.length; i++) {
+
+      var country = COUNTRIES[i];
+
+      if (
+        number.indexOf(country.dialCode) === 0 &&
+        (
+          !bestMatch ||
+          country.dialCode.length > bestMatch.dialCode.length
+        )
+      ) {
+        bestMatch = country;
+      }
+
+    }
+
+    return bestMatch;
+  }
+
+
+  /*
+   * Applies a mask using #
+   */
+
+  function applyMask(number, mask) {
+
+    var result = '';
+    var position = 0;
+
+    for (
+      var i = 0;
+      i < mask.length && position < number.length;
+      i++
+    ) {
+
+      if (mask.charAt(i) === '#') {
+
+        result += number.charAt(position);
+        position++;
+
+      } else {
+
+        result += mask.charAt(i);
+
+      }
+
+    }
+
+    return result;
+  }
+
+
+  /*
+   * Maximum amount of digits that can be entered visually.
+   *
+   * Japan:
+   *
+   * Without leading zero:
+   * 90 7788 7788 = 10 digits
+   *
+   * With leading zero:
+   * 090 7788 7788 = 11 digits
+   */
+
+  function getMaxVisualDigits(country, number) {
+
+    if (
+      country.allowLeadingZero &&
+      number.charAt(0) === '0'
+    ) {
+      return country.digits + 1;
+    }
+
+    return country.digits;
+  }
+
+
+  /*
+   * Returns the normalized national number.
+   *
+   * Japan example:
+   *
+   * 09077887788
+   * becomes
+   * 9077887788
+   */
+
+  function getNationalNumber(country, number) {
+
+    number = digitsOnly(number);
+
+    if (
+      country.allowLeadingZero &&
+      number.charAt(0) === '0'
+    ) {
+
+      number = number.substring(1);
+
+    }
+
+    return number.slice(0, country.digits);
+  }
+
+
+  /*
+   * Value sent to SureCart.
+   *
+   * No "+" symbol.
+   *
+   * Example:
+   *
+   * 819077887788
+   */
+
+  function getFullNumber(country, number) {
+
+    var nationalNumber = getNationalNumber(
+      country,
+      number
+    );
+
+    if (!nationalNumber) {
+      return '';
+    }
+
+    return country.dialCode + nationalNumber;
+  }
+
+
+  function isValidNumber(country, number) {
+
+    var nationalNumber = getNationalNumber(
+      country,
+      number
+    );
+
+    return nationalNumber.length === country.digits;
+  }
+
+
+  /*
+   * Recursively searches through nested Shadow DOMs.
+   */
+
+  function findAllDeep(selector, root, results) {
+
+    results = results || [];
+    root = root || document;
+
+    var elements = root.querySelectorAll('*');
+
+    for (var i = 0; i < elements.length; i++) {
+
+      var element = elements[i];
+
+      if (
+        element.matches &&
+        element.matches(selector)
+      ) {
+
+        results.push(element);
+
+      }
+
+      if (element.shadowRoot) {
+
+        findAllDeep(
+          selector,
+          element.shadowRoot,
+          results
+        );
+
+      }
+
+    }
+
+    return results;
+  }
+
+
+  /* =========================================================
+   * BUILD PHONE FIELD
+   * ========================================================= */
+
+  function mountPhoneField(host) {
+
+    if (host.__countryCodeMaskReady) return;
+
+    var shadowRoot = host.shadowRoot;
+
+    if (!shadowRoot) return;
+
+
+    /*
+     * Original SureCart phone input.
+     */
+
+    var originalInput =
+      shadowRoot.querySelector('input[type="tel"]');
+
+    if (!originalInput) return;
+
+
+    var inputBase =
+      shadowRoot.querySelector('[part="base"]');
+
+    if (!inputBase) return;
+
+
+    host.__countryCodeMaskReady = true;
+
+
+    /* =========================================================
+     * HIDE ORIGINAL INPUT
+     *
+     * The original input remains active and is still used
+     * internally by SureCart.
+     * ========================================================= */
+
+    originalInput.style.position = 'absolute';
+    originalInput.style.opacity = '0';
+    originalInput.style.pointerEvents = 'none';
+    originalInput.style.width = '1px';
+    originalInput.style.height = '1px';
+    originalInput.style.padding = '0';
+    originalInput.style.border = '0';
+
+
+    /* =========================================================
+     * VISUAL PHONE INPUT
+     * ========================================================= */
+
+    var visualInput =
+      document.createElement('input');
+
+    visualInput.type = 'tel';
+    visualInput.inputMode = 'numeric';
+    visualInput.autocomplete = 'tel';
+
+    visualInput.setAttribute(
+      'aria-label',
+      host.label || 'Phone'
+    );
+
+    visualInput.style.cssText = [
+      'flex:1',
+      'width:100%',
+      'min-width:0',
+      'border:0',
+      'outline:0',
+      'background:transparent',
+      'font:inherit',
+      'color:inherit',
+      'padding:0',
+      'margin:0'
+    ].join(';');
+
+
+    var suffix =
+      shadowRoot.querySelector('[part="suffix"]');
+
+    if (suffix) {
+
+      inputBase.insertBefore(
+        visualInput,
+        suffix
+      );
+
+    } else {
+
+      inputBase.appendChild(
+        visualInput
+      );
+
+    }
+
+
+    /* =========================================================
+     * COUNTRY CODE PREFIX
+     * ========================================================= */
+
+    var countryWrapper =
+      document.createElement('span');
+
+    countryWrapper.setAttribute(
+      'slot',
+      'prefix'
+    );
+
+    countryWrapper.style.cssText = [
+      'position:relative',
+      'display:inline-flex',
+      'align-items:center',
+      'gap:5px',
+      'padding-right:10px',
+      'margin-right:8px',
+      'border-right:1px solid rgba(0,0,0,.18)',
+      'white-space:nowrap',
+      'line-height:1'
+    ].join(';');
+
+
+    var countryLabel =
+      document.createElement('span');
+
+    countryLabel.style.cssText = [
+      'font-size:.95em',
+      'pointer-events:none',
+      'white-space:nowrap'
+    ].join(';');
+
+
+    var dropdownArrow =
+      document.createElement('span');
+
+    dropdownArrow.textContent = '▾';
+
+    dropdownArrow.style.cssText = [
+      'font-size:.7em',
+      'opacity:.55',
+      'pointer-events:none'
+    ].join(';');
+
+
+    var countrySelect =
+      document.createElement('select');
+
+    countrySelect.setAttribute(
+      'aria-label',
+      'Country code'
+    );
+
+    countrySelect.style.cssText = [
+      'position:absolute',
+      'inset:0',
+      'width:100%',
+      'height:100%',
+      'opacity:0',
+      'cursor:pointer',
+      'border:0',
+      'padding:0',
+      'margin:0'
+    ].join(';');
+
+
+    for (
+      var i = 0;
+      i < COUNTRIES.length;
+      i++
+    ) {
+
+      var country = COUNTRIES[i];
+
+      var option =
+        document.createElement('option');
+
+      option.value = country.cc;
+
+      option.textContent =
+        flagEmoji(country.cc) +
+        '  ' +
+        country.name +
+        '  +' +
+        country.dialCode;
+
+      countrySelect.appendChild(option);
+
+    }
+
+
+    countryWrapper.appendChild(
+      countryLabel
+    );
+
+    countryWrapper.appendChild(
+      dropdownArrow
+    );
+
+    countryWrapper.appendChild(
+      countrySelect
+    );
+
+    host.appendChild(
+      countryWrapper
+    );
+
+
+    /* =========================================================
+     * STATE
+     * ========================================================= */
+
+    var currentCountry =
+      getCountryByCode(DEFAULT_COUNTRY) ||
+      COUNTRIES[0];
+
+    var isSyncing = false;
+
+
+    function updateCountryPrefix() {
+
+      countryLabel.textContent =
+        flagEmoji(currentCountry.cc) +
+        ' +' +
+        currentCountry.dialCode;
+
+      countrySelect.value =
+        currentCountry.cc;
+
+      visualInput.placeholder =
+        currentCountry.example || '';
+
+    }
+
+
+    /*
+     * Updates the real SureCart phone value.
+     */
+
+    function updateSureCart() {
+
+      if (isSyncing) return;
+
+      isSyncing = true;
+
+
+      var rawNumber =
+        digitsOnly(
+          visualInput.value
+        );
+
+
+      var fullNumber =
+        getFullNumber(
+          currentCountry,
+          rawNumber
+        );
+
+
+      /*
+       * Internally:
+       *
+       * Japan displayed:
+       * 090-7788-7788
+       *
+       * SureCart receives:
+       * 819077887788
+       */
+
+      originalInput.value =
+        fullNumber;
+
+      host.value =
+        fullNumber;
+
+
+      /*
+       * Validate exact phone number length.
+       */
+
+      if (
+        rawNumber.length &&
+        !isValidNumber(
+          currentCountry,
+          rawNumber
+        )
+      ) {
+
+        originalInput.setCustomValidity(
+          'Enter the complete phone number.'
+        );
+
+      } else {
+
+        originalInput.setCustomValidity('');
+
+      }
+
+
+      /*
+       * Make SureCart detect the updated value.
+       */
+
+      originalInput.dispatchEvent(
+        new Event(
+          'input',
+          {
+            bubbles: true,
+            composed: true
+          }
+        )
+      );
+
+
+      host.value =
+        fullNumber;
+
+
+      originalInput.dispatchEvent(
+        new Event(
+          'change',
+          {
+            bubbles: true,
+            composed: true
+          }
+        )
+      );
+
+
+      host.value =
+        fullNumber;
+
+
+      isSyncing = false;
+
+    }
+
+
+    function formatVisualInput() {
+
+      var number =
+        digitsOnly(
+          visualInput.value
+        );
+
+
+      var limit =
+        getMaxVisualDigits(
+          currentCountry,
+          number
+        );
+
+
+      number =
+        number.slice(
+          0,
+          limit
+        );
+
+
+      /*
+       * Use the leading-zero mask when applicable.
+       */
+
+      var mask =
+        currentCountry.mask;
+
+
+      if (
+        currentCountry.allowLeadingZero &&
+        number.charAt(0) === '0' &&
+        currentCountry.leadingZeroMask
+      ) {
+
+        mask =
+          currentCountry.leadingZeroMask;
+
+      }
+
+
+      visualInput.value =
+        applyMask(
+          number,
+          mask
+        );
+
+
+      updateSureCart();
+
+    }
+
+
+    /* =========================================================
+     * EVENTS
+     * ========================================================= */
+
+    visualInput.addEventListener(
+      'input',
+      function () {
+
+        formatVisualInput();
+
+      }
+    );
+
+
+    visualInput.addEventListener(
+      'blur',
+      function () {
+
+        updateSureCart();
+
+      }
+    );
+
+
+    countrySelect.addEventListener(
+      'change',
+      function () {
+
+        var newCountry =
+          getCountryByCode(
+            countrySelect.value
+          );
+
+        if (!newCountry) return;
+
+
+        currentCountry =
+          newCountry;
+
+        updateCountryPrefix();
+
+
+        /*
+         * Keep only the entered digits and apply
+         * the mask for the newly selected country.
+         */
+
+        visualInput.value =
+          digitsOnly(
+            visualInput.value
+          );
+
+
+        formatVisualInput();
+
+
+        try {
+
+          visualInput.focus();
+
+        } catch(e) {}
+
+      }
+    );
+
+
+    /*
+     * If SureCart tries to focus the hidden original
+     * field because of a validation error, move focus
+     * to the visible phone input instead.
+     */
+
+    originalInput.addEventListener(
+      'invalid',
+      function () {
+
+        setTimeout(
+          function () {
+
+            try {
+
+              visualInput.focus();
+
+            } catch(e) {}
+
+          },
+          0
+        );
+
+      }
+    );
+
+
+    /* =========================================================
+     * EXISTING VALUE
+     * ========================================================= */
+
+    var existingValue =
+      digitsOnly(
+        originalInput.value ||
+        host.value ||
+        ''
+      );
+
+
+    if (existingValue) {
+
+      var detectedCountry =
+        detectCountryByDialCode(
+          existingValue
+        );
+
+      if (detectedCountry) {
+
+        currentCountry =
+          detectedCountry;
+
+        var nationalNumber =
+          existingValue.substring(
+            detectedCountry.dialCode.length
+          );
+
+        visualInput.value =
+          nationalNumber;
+
+      }
+
+    }
+
+
+    updateCountryPrefix();
+
+    formatVisualInput();
+  }
+
+
+  /* =========================================================
+   * INITIALIZATION
+   * ========================================================= */
+
+  function scanPhoneFields() {
+
+    var phoneFields =
+      findAllDeep(
+        'sc-phone-input'
+      );
+
+    for (
+      var i = 0;
+      i < phoneFields.length;
+      i++
+    ) {
+
+      mountPhoneField(
+        phoneFields[i]
+      );
+
+    }
+
+  }
+
+
+  scanPhoneFields();
+
+
+  try {
+
+    new MutationObserver(
+      scanPhoneFields
+    ).observe(
+      document.documentElement,
+      {
+        childList: true,
+        subtree: true
+      }
+    );
+
+  } catch(e) {}
+
+
+  var scanTimer =
+    setInterval(
+      scanPhoneFields,
+      800
+    );
+
+
+  setTimeout(
+    function () {
+
+      clearInterval(
+        scanTimer
+      );
+
+    },
+    60000
+  );
+
+})();
+</script>
+	<?php
+}, 99 );
